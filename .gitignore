@@ -1,0 +1,4 @@
+*.libsvm
+*.git
+target/
+bin/
