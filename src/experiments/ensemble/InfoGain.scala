@@ -1,33 +1,33 @@
 package experiments.ensemble
 
 import java.io.File
+import java.io.FileOutputStream
 import java.io.PrintWriter
-import scala.annotation.elidable
+
 import scala.annotation.elidable.ASSERTION
+import scala.collection.immutable.HashMap
+import scala.collection.mutable.ListBuffer
 import scala.util.Random
+
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.mllib.classification.NaiveBayes
+import org.apache.spark.mllib.classification.SVMWithSGD
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
+import org.apache.spark.mllib.feature.FeatureRankingTechnique
 import org.apache.spark.mllib.feature.InfoThCriterionFactory
-import org.apache.spark.mllib.feature.InfoThSelector
-import org.apache.spark.mllib.feature.InfoThSelector2
+import org.apache.spark.mllib.feature.InfoThRanking
+import org.apache.spark.mllib.feature.SVMWeightsRanking
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
-import java.io.FileOutputStream
-import scala.collection.immutable.HashMap
-import scala.collection.mutable.ListBuffer
-import org.apache.spark.mllib.feature.FeatureRankingTechnique
-import org.apache.spark.mllib.feature.InfoThRanking
-import org.apache.spark.mllib.feature.SVMWeightsRanking
-import org.apache.spark.mllib.classification.SVMWithSGD
 
 object InfoGain {
   val f = new File("ml_diagnostics.txt")
   val nPartitions = 100
   val useSparse = false
+  val nFolds = 2 // 3-fold Cross Validation
 
   def main(args : Array[String]) {
     val conf = new SparkConf()
@@ -38,18 +38,20 @@ object InfoGain {
     val sc = new SparkContext(conf) 
     val techniques = List(new SVMWeightsRanking()/*, new InfoThRanking("mim"), new InfoThRanking("mifs"), new InfoThRanking("jmi"), new InfoThRanking("mrmr"), new InfoThRanking("icap"), new InfoThRanking("cmim"), new InfoThRanking("if")*/)
     val criterion = new InfoThCriterionFactory("mim")
-    val baseData = MLUtils.loadLibSVMFile(sc, "rq2_quarter.libsvm").repartition(nPartitions).cache ///Users/jdeloach/Code/Weka/weka-3-7-12/ //binaryClass
+    val baseData = MLUtils.loadLibSVMFile(sc, "rq2_quarter.libsvm").repartition(nPartitions).sample(false, .01, 11).cache ///Users/jdeloach/Code/Weka/weka-3-7-12/ //binaryClass
     val nToSelect = 100
-    val nFolds = 5 // 5-fold Cross Validation
-    val folds = MLUtils.kFold(baseData, nFolds, 7)
     
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    // this is used to implicitly convert an RDD to a DataFrame.
+    import sqlContext.implicits._
+    baseData.toDF()
     val sets = generateSets(sc, baseData)
     
     techniques.map { c => execute(sc, sets, baseData, c, nToSelect) }
   }
   
   def execute(sc: SparkContext, baseSets: List[RDD[LabeledPoint]], baseData:RDD[LabeledPoint], technique: FeatureRankingTechnique, nToSelect: Int) : Unit = {
-    val listOfTopFeatures = baseSets.par.map { data => {
+    /*val listOfTopFeatures = baseSets.par.map { data => {
       technique.train(data)
       technique.weights
     }}.toList
@@ -57,16 +59,16 @@ object InfoGain {
     val perClassifierTop100Features = listOfTopFeatures.map(list => list.sortBy(x => Math.abs(x._2)).reverse.take(nToSelect).map(_._1).toArray)    
     val top100CommonFeats = listOfTopFeatures.flatten.groupBy{ x => x._1 }.map{case (idx,list) => (idx,list.map(x => Math.abs(x._2)).sum)}.toList.sortBy(f => f._2).reverse.take(nToSelect).map(_._1)
     val random100Feats = Random.shuffle(listOfTopFeatures.map(list => list.map(_._1).toArray).flatten.distinct.toList).take(nToSelect)
-    technique.train(baseData);  val base100Feats = technique.weights.map(_._1)
+    technique.train(baseData);  val base100Feats = technique.weights.map(_._1)*/
     val resultsDB = new ListBuffer[(Int,Map[String,Any])] // [FOLD,[Key,Value]] -> key includes {test,auROC,auPRC,etc.}
     var fold = 1
     
-    MLUtils.kFold(baseData, 5, 7).foreach{ case (train,test) => {
+    MLUtils.kFold(baseData, nFolds, 7).par.foreach{ case (train,test) => {
       val splits = Array(train,test)
       val sets = generateSets(sc, train)
 
        // NaiveBayes
-      resultsDB += ((fold, testNNaiveBayes(subsetOfFeatures(sets, top100CommonFeats), subsetOfFeatures(splits(1), top100CommonFeats), "Ensemble " + nToSelect + " Top (" + technique.techniqueName + ")")));
+/*      resultsDB += ((fold, testNNaiveBayes(subsetOfFeatures(sets, top100CommonFeats), subsetOfFeatures(splits(1), top100CommonFeats), "Ensemble " + nToSelect + " Top (" + technique.techniqueName + ")")));
       resultsDB += ((fold, testNaiveBayes(subsetOfFeatures(splits(0), base100Feats), subsetOfFeatures(splits(1), base100Feats), "Single Classifier (" + nToSelect + ") features (" + technique.techniqueName + ")")))
   //    val r3 = testNNaiveBayes(sets, splits(1), "Ensemble ALL Feats")
       resultsDB += ((fold, testNNaiveBayes(subsetOfFeatures(sets, random100Feats), subsetOfFeatures(splits(1), random100Feats), "Ensemble Random " + nToSelect + " Feats (" + technique.techniqueName + ")")));
@@ -78,7 +80,11 @@ object InfoGain {
       resultsDB += ((fold, testSVM(subsetOfFeatures(splits(0), base100Feats), subsetOfFeatures(splits(1), base100Feats), "Single Classifier (" + nToSelect + ") features (" + technique.techniqueName + ")")))
       resultsDB += ((fold, testNSVM(subsetOfFeatures(sets, random100Feats), subsetOfFeatures(splits(1), random100Feats), "Ensemble Random " + nToSelect + " Feats (" + technique.techniqueName + ")")));
       resultsDB += ((fold, testNSVM(subsetOfFeatures(sets, base100Feats), subsetOfFeatures(splits(1), base100Feats), "1-Classifier " + nToSelect + " Features used at the N-classifier Level (" + technique.techniqueName + ")")))
-      
+*/      
+
+      // NHeterogenouslySelectedFeatures
+      resultsDB += ((fold, testNHeterogenouslySelectedFeaturesNaiveBayes(sets, splits(1), "Heterogenous Feature Subsets Per Classifier (" + technique.techniqueName + ")")))
+
       fold += 1
       
       resultsDB
@@ -147,6 +153,13 @@ object InfoGain {
     val predictionAndLabel = test.map(p => (ensemble.predict(p.features), p.label))
     val metrics = new BinaryClassificationMetrics(predictionAndLabel)
     HashMap("test" -> ("NSVM " + testName), "auROC" -> metrics.areaUnderROC(), "auPRC" -> metrics.areaUnderPR()/*, "averageVotedAuPRC" -> ensemble.averageVotedAuPRC(test), "averageAuPRC" -> ensemble.averageAuPRC(test)*/)
+  }
+
+  def testNHeterogenouslySelectedFeaturesNaiveBayes(train: List[RDD[LabeledPoint]], test: RDD[LabeledPoint], testName: String) : Map[String,Any] = {
+      val ensemble = new HeterogeneousFeatureSubsetClassifierEnsemble(train)
+      val predictionAndLabel = test.map(p => (ensemble.predict(p.features), p.label))
+      val metrics = new BinaryClassificationMetrics(predictionAndLabel)
+      HashMap("test" -> ("NB " + testName), "auROC" -> metrics.areaUnderROC(), "auPRC" -> metrics.areaUnderPR(), "expertAuPRC" -> ensemble.expertAuPRC(test))
   }
   
   /**
