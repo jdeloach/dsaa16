@@ -4,6 +4,8 @@ ml_diagnostics.txt
 *.class
 *.log
 
+src/experiments/old/*
+
 # sbt specific
 .cache
 .history
