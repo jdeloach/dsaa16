@@ -1,18 +1,23 @@
-package experiments.old
+package experiments.ensemble
 
+import scala.annotation.elidable
+import scala.annotation.elidable.ASSERTION
+import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.mllib.classification.NaiveBayesModel
+import org.apache.spark.mllib.classification.SVMModel
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.apache.spark.mllib.linalg.Vector
+import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
-import org.apache.spark.mllib.linalg.Vectors
-import scala.collection.mutable.ArrayBuffer
+import org.apache.spark.mllib.tree.model.DecisionTreeModel
+import org.apache.spark.mllib.regression.GeneralizedLinearModel
 
 
 trait ClassifierEnsemble {
   def predict(features: Vector) : Double
   def predictProbabilities(features: Vector) : Vector
-  def averageAuPRC(training: RDD[LabeledPoint]) : Double
+  def averageAuPRC(test: RDD[LabeledPoint]) : Double
 }
 
 class NaiveBayesBinaryVoting(models: List[NaiveBayesModel]) extends ClassifierEnsemble with Serializable {
@@ -118,5 +123,46 @@ class NBClassifierUniqueFeaturesEnsemble(models: List[(NaiveBayesModel,Array[Int
       Vectors.sparse(baseFeatureVector.size, modelFeatures, modelFeatures.map { y => baseFeatureVector(y) }.toArray)
     else
       Vectors.dense(modelFeatures.map{ y => baseFeatureVector(y) }.toArray)
+  }
+}
+
+class LinearModelEnsemble(models: List[GeneralizedLinearModel]) extends ClassifierEnsemble with Serializable {
+  def predict(features: Vector) : Double = {
+    models.groupBy(_.predict(features)).maxBy(_._2.length)._1    
+  }
+  
+  def predictProbabilities(features: Vector) : Vector = {
+    throw new NotImplementedError("LinearModelEnsembles do not support posterior probabilities.")
+  }
+  
+  /**
+   * Computes auPRC for each classifier, and then averages the auPRCs
+   */
+  def averageAuPRC(test: RDD[LabeledPoint]) : Double = {
+    val auPRCs = models.map { model => {
+      // Evaluate model on test instances and compute test error
+      val predictionAndLabel = test.map { point =>
+        val prediction = model.predict(point.features)
+        (prediction, point.label)
+      }
+      
+      val metrics = new BinaryClassificationMetrics(predictionAndLabel)
+      metrics.areaUnderPR()
+    }}
+    
+    auPRCs.sum / auPRCs.length
+  }
+  
+  /**
+   * Takes the auPRC of the ensemble classifier created with voting of subclassifiers
+   */
+  def averageVotedAuPRC(test: RDD[LabeledPoint]) : Double = {
+    val predictionAndLabel = test.map { point =>
+      val prediction = predict(point.features)
+      (prediction,point.label)
+    }
+        
+    val metrics = new BinaryClassificationMetrics(predictionAndLabel)
+    metrics.areaUnderPR()    
   }
 }

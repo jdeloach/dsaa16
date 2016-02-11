@@ -8,7 +8,7 @@ import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import java.io.FileOutputStream
 import java.io.PrintWriter
 import java.io.File
-import experiments.old.NaiveBayesBinaryVoting
+import experiments.ensemble.NaiveBayesBinaryVoting
 
 object EasyEnsemble {
   def main(args: Array[String]) : Unit = {
