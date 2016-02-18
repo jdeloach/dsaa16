@@ -159,7 +159,7 @@ class HeterogeneousFeatureSubsetClassifierEnsemble(sets: List[RDD[LabeledPoint]]
   private var coreEnsemble : NBClassifierUniqueFeaturesEnsemble = _
   
   private def init() : Unit = {
-    val techniques = List(new SVMWeightsRanking(), new InfoThRanking("mim"), new InfoThRanking("mifs")/*, new InfoThRanking("jmi"), new InfoThRanking("mrmr"), new InfoThRanking("icap"), new InfoThRanking("cmim"), new InfoThRanking("if")*/)
+    val techniques = List(new SVMWeightsRanking(), new InfoThRanking("mim"), new InfoThRanking("mifs"), new InfoThRanking("jmi"), new InfoThRanking("mrmr")/*, new InfoThRanking("icap"), new InfoThRanking("cmim"), new InfoThRanking("if")*/)
 
     val listOfTopFeatures = sets.par.map { data => {
       val technique = techniques(scala.util.Random.nextInt(techniques.size))

@@ -1,8 +1,9 @@
-ml_diagnostics.txt
+ml_diagnostics*
 .cache/
 *.libsvm
 *.class
 *.log
+*.arff
 
 src/experiments/old/*
 
