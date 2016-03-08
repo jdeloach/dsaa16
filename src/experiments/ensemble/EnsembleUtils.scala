@@ -40,4 +40,18 @@ object EnsembleUtils {
     
     (sc.parallelize(instances.value).sample(false, sample, 11L), sc.parallelize(features.value))
   }
+  
+  def printConfusionMatrix(predAndLabel: List[(Double,Double)], classCount: Int) = {
+    // labelAndPred
+    println(" " + (0 until classCount).mkString(" ") + " <- predicted ")
+    println((0 until 2*classCount).map(x => "--").mkString)
+    for(i <- 0 until classCount) {
+      for(j <- 0 until classCount) {
+        // i is actual
+        // j is classified as
+        print(" " + predAndLabel.count{ case (pred,label) => label == i && pred == j })
+      }
+      println(" | actual=" + i)
+    }
+  }
 }

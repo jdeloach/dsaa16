@@ -21,12 +21,14 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.util.MLUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.feature.InfoThRanking
+import org.apache.spark.storage.StorageLevel
+import org.apache.spark.mllib.linalg.SparseVector
 
 object InfoGain {
   val f = new File("ml_diagnostics.txt")
   val nPartitions = 100
   val useSparse = false
-  val sample = .2
+  val sample = .1
   val nFolds = 3 // 3-fold Cross Validation
 
   def main(args : Array[String]) {
@@ -36,22 +38,25 @@ object InfoGain {
       //.set("spark.executor.memory", "35g")
       .set("spark.driver.maxResultSize", "45g")
     val sc = new SparkContext(conf) 
-        
-    val (data,features) = EnsembleUtils.loadArff(sc, "drebin.arff", sample)
-    val skipPrefixes = List("activity::", "intent::", "provider::", "service_receiver::", "url::")
-    val featsToKeep = features.zipWithIndex().filter{ case (feature:String,index:Long) => !skipPrefixes.map { x => feature.startsWith(x) }.reduce(_ || _) }.collect    
-    val subsetData = data.map { x => new LabeledPoint(x.label, EnsembleUtils.modelSpecificFeatureVector(featsToKeep.map(_._2.toInt), x.features, true)) }
-    val nToSelect = (featsToKeep.size * .05).toInt
-    diagnostics("Beginning InfoGain Experiments with Drebin data. Original feature count: " + features.count + ", Subsampled Feature Count: " + nToSelect + ", Overall Data Sample: " + sample, true)
+      
+    val data = MLUtils.loadLibSVMFile(sc, "drebin_combined.libsvm")
+    val nToSelect = 150
+    
+    //val (data,features) = EnsembleUtils.loadArff(sc, "drebin_combined.arff", sample)
+    //val skipPrefixes = List("activity::", "intent::", "provider::", "service_receiver::", "url::")
+    //val featsToKeep = features.zipWithIndex().filter{ case (feature:String,index:Long) => !skipPrefixes.map { x => feature.startsWith(x) }.reduce(_ || _) }.collect    
+    //val subsetData = data.map { x => new LabeledPoint(x.label, EnsembleUtils.modelSpecificFeatureVector(featsToKeep.map(_._2.toInt), x.features, true)) }
+    //val nToSelect = (featsToKeep.size * .05).toInt
+    //assert(subsetData.first().features.isInstanceOf[SparseVector])
     
     // JMI is the one that causes us to often fail.
     val techniques = List(new SVMWeightsRanking()/*, new InfoThRanking("mim"), new InfoThRanking("mifs"), /*new InfoThRanking("jmi"),*/ new InfoThRanking("mrmr"), new InfoThRanking("icap"), new InfoThRanking("cmim"), new InfoThRanking("if")*/)
     val criterion = new InfoThCriterionFactory("mim")
 //    val baseData = MLUtils.loadLibSVMFile(sc, "drebin.libsvm").repartition(nPartitions).sample(false, .5, 11).cache ///Users/jdeloach/Code/Weka/weka-3-7-12/ //binaryClass
 
-    val sets = generateSets(sc, subsetData)
+    val sets = generateSets(sc, data)
     
-    techniques.map { c => execute(sc, sets, subsetData, c, nToSelect) }
+    techniques.map { c => execute(sc, sets, data, c, nToSelect) }
   }
   
   def execute(sc: SparkContext, baseSets: List[RDD[LabeledPoint]], baseData:RDD[LabeledPoint], technique: FeatureRankingTechnique, nToSelect: Int) : Unit = {
@@ -119,7 +124,7 @@ object InfoGain {
     
     val numClassifiers = (Math.floor(positiveSet.length / negativeSet.length)).toInt
     val positiveSets = positiveSet.grouped(negativeSet.length).toList
-    positiveSets.map { x => sc.parallelize(x.union(negativeSet)).cache() }
+    positiveSets.map { x => sc.parallelize(x.union(negativeSet)).persist(StorageLevel.MEMORY_AND_DISK_SER) }
   }
   
   /**
