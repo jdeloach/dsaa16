@@ -17,8 +17,8 @@ import org.apache.spark.mllib.linalg.DenseVector
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.mllib.linalg.BLAS.dot
 import org.apache.spark.mllib.optimization.LabelRegularizedGradientDescent
-import org.apache.spark.mllib.optimization.LBFGS
 import org.apache.spark.mllib.optimization.LRLBFGS
+import org.apache.spark.mllib.optimization.LabelRegularizedUpdater
 
 /**
  * Classification model trained using Multinomial/Binary Logistic Regression.
@@ -298,13 +298,13 @@ object LRLogisticRegressionWithSGD {
  * for k classes multi-label classification problem.
  */
 @Since("1.1.0")
-class LRLogisticRegressionWithLBFGS
+class LRLogisticRegressionWithLBFGS(pTilde: Double, lambdaU: Double)
   extends GeneralizedLinearAlgorithm[LogisticRegressionModel] with Serializable {
 
   this.setFeatureScaling(true)
 
   @Since("1.1.0")
-  override val optimizer = new LRLBFGS(new LogisticGradient, new SquaredL2Updater)
+  override val optimizer = new LRLBFGS(new LogisticGradient, new LabelRegularizedUpdater(pTilde, lambdaU))
 
   override protected val validators = List(multiLabelValidator)
 

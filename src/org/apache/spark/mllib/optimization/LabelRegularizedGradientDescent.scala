@@ -246,7 +246,8 @@ object LabelRegularizedGradientDescent extends Logging {
          * and regVal is the regularization value computed in the previous iteration as well.
          */
         stochasticLossHistory.append(lossSum / miniBatchSize + regVal)
-        val updater2 = new LabelRegularizedUpdater()
+        throw new Exception("Not ready to run SGD -- need to setup Tilde/Other values")
+        val updater2 = new LabelRegularizedUpdater(.01, 10)
         val update = updater2.compute(
           weights, Vectors.fromBreeze(gradientSum / miniBatchSize.toDouble),
           stepSize, i, regParam, data)

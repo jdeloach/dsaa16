@@ -9,15 +9,19 @@ import breeze.linalg.{axpy => brzAxpy}
 import breeze.linalg.{norm => brzNorm}
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.classification.LogisticRegressionModel
+import org.apache.commons.lang.NotImplementedException
 
-class LabelRegularizedUpdater extends Updater {
+class LabelRegularizedUpdater(pTilde:Double, lambdaU:Double) extends Updater {
   override def compute(
       weightsOld: Vector,
       gradient: Vector,
       stepSize: Double,
       iter: Int,
-      regParam: Double): (Vector, Double) = { (null,0d) }
-  
+      regParam: Double): (Vector, Double) = { 
+    throw new NotImplementedException("Use Compute() w/ data field for LabelRegularizedUpdater")
+    (null,0d) 
+  }
+
   def compute(
       weightsOld: Vector,
       gradient: Vector,
@@ -28,21 +32,15 @@ class LabelRegularizedUpdater extends Updater {
         // add up both updates from the gradient of the loss (= step) as well as
         // the gradient of the regularizer (= regParam * weightsOld)
         // w' = w - thisIterStepSize * (gradient + regParam * w + KL-Gradient)
-        // w' = (1 - thisIterStepSize * regParam) * w - thisIterStepSize * gradient
         val thisIterStepSize = stepSize / math.sqrt(iter)
         val brzWeights: BV[Double] = weightsOld.toBreeze.toDenseVector
         val grad = lrGradient(weightsOld,data)
         brzWeights -= thisIterStepSize * (gradient.toBreeze + (regParam * brzWeights) + grad._1)
-        //brzWeights -= thisIterStepSize * lrGradient(weightsOld, data) // kl-divergence
-        //brzWeights :*= (1.0 - thisIterStepSize * regParam)
-//        if(weightsOld(0) != 0)
-//          brzWeights += thisIterStepSize * (gradient.toBreeze + (regParam * lrGradient(weightsOld, data))) // iterStepSize * (gradient + (regParam * kl-Gradient))
-        //brzAxpy(-thisIterStepSize, gradient.toBreeze, brzWeights)
         val norm = brzNorm(brzWeights, 2.0)
         (Vectors.fromBreeze(brzWeights), 0.5 * regParam * norm * norm + grad._2)
   }
   
-  // vector and regularizer term
+  // vector and regularizer term @see compute() returns
   def lrGradient(weightsOld: Vector, data: RDD[(Double,Vector)]) : (BV[Double],Double) = {
     // TODO: implement minibatch fraction 1.0
     
@@ -52,12 +50,10 @@ class LabelRegularizedUpdater extends Updater {
     val unlabeled = data.sample(false, 1.0, 42).filter(_._1 == unlabeledClass)
     val unlabledCount = unlabeled.count
     val pThetaHat = 1/(unlabeled.count.toDouble) * unlabeled.map(data => currModel.predict(data._2)).sum
-    val pSwiggle = .01 // 8500/200000
     
-    val klDivergence = pSwiggle * math.log(1.0/pThetaHat) + (1 - pSwiggle) * math.log((1-pSwiggle)/(1-pThetaHat))
+    val klDivergence = pTilde * math.log(1.0/pThetaHat) + (1 - pTilde) * math.log((1-pTilde)/(1-pThetaHat))
     val summation = unlabeled.map(data => data._2.toBreeze * (currModel.predict(data._2) * (1 - currModel.predict(data._2)))).reduce((v1,v2) => v1 + v2) // xi * p(y=1)(1-p(y=1)) for all unlabeled
-    val lambdaU = 10d//* data.filter(_._1 == 1).count // per Mann et. al in Mitchell
-    val lrGradient =  1 / (unlabledCount * 1.0) * ((1-pSwiggle)/(1-pThetaHat) - pSwiggle/pThetaHat) * summation
+    val lrGradient =  1 / (unlabledCount * 1.0) * ((1-pTilde)/(1-pThetaHat) - pTilde/pThetaHat) * summation
     
     (lambdaU * lrGradient, lambdaU * klDivergence)
   }

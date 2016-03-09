@@ -39,7 +39,7 @@ import breeze.optimize.{LBFGS => BreezeLBFGS}
  * @param updater Updater to be used to update weights after every iteration.
  */
 @DeveloperApi
-class LRLBFGS(private var gradient: Gradient, private var updater: Updater)
+class LRLBFGS(private var gradient: Gradient, private var updater: LabelRegularizedUpdater)
   extends Optimizer with Logging {
 
   private var numCorrections = 10
@@ -110,7 +110,7 @@ class LRLBFGS(private var gradient: Gradient, private var updater: Updater)
    * The updater is responsible to perform the update from the regularization term as well,
    * and therefore determines what kind or regularization is used, if any.
    */
-  def setUpdater(updater: Updater): this.type = {
+  def setUpdater(updater: LabelRegularizedUpdater): this.type = {
     this.updater = updater
     this
   }
@@ -160,7 +160,7 @@ object LRLBFGS extends Logging {
   def runLBFGS(
       data: RDD[(Double, Vector)],
       gradient: Gradient,
-      updater: Updater,
+      updater: LabelRegularizedUpdater,
       numCorrections: Int,
       convergenceTol: Double,
       maxNumIterations: Int,
@@ -206,7 +206,7 @@ object LRLBFGS extends Logging {
   private class CostFun(
     data: RDD[(Double, Vector)],
     gradient: Gradient,
-    updater: Updater,
+    updater: LabelRegularizedUpdater,
     regParam: Double,
     numExamples: Long) extends DiffFunction[BDV[Double]] {
 
@@ -232,8 +232,7 @@ object LRLBFGS extends Logging {
        * regVal is sum of weight squares if it's L2 updater;
        * for other updater, the same logic is followed.
        */
-      val updater2 = new LabelRegularizedUpdater()
-      val regVal = updater2.compute(w, Vectors.zeros(n), 0, 1, regParam, data)._2
+      val regVal = updater.compute(w, Vectors.zeros(n), 0, 1, regParam, data)._2
 
       val loss = lossSum / numExamples + regVal
       /**
@@ -254,7 +253,7 @@ object LRLBFGS extends Logging {
       // The following gradientTotal is actually the regularization part of gradient.
       // Will add the gradientSum computed from the data with weights in the next step.
       val gradientTotal = w.copy
-      axpy(-1.0, updater2.compute(w, Vectors.zeros(n), 1, 1, regParam, data)._1, gradientTotal)
+      axpy(-1.0, updater.compute(w, Vectors.zeros(n), 1, 1, regParam, data)._1, gradientTotal)
 
       // gradientTotal = gradientSum / numExamples + gradientTotal
       axpy(1.0 / numExamples, gradientSum, gradientTotal)

@@ -12,12 +12,19 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.mllib.classification.LRLogisticRegressionWithLBFGS
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
+import java.io.FileOutputStream
+import java.io.PrintWriter
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 
 
 /**
  * @author jdeloach
  */
 object ExperimentAndroidUnlabeled {
+  val f = new File("labelreg_diagnostics.txt")
+
   def main(args: Array[String]) : Unit = {
     val conf = new SparkConf()
       .setAppName("Label Regularization")
@@ -28,28 +35,41 @@ object ExperimentAndroidUnlabeled {
     val data = MLUtils.loadLibSVMFile(sc, "rq2_binaryClass.libsvm")
     val folds = MLUtils.kFold(data, 3, 11)
     
-    val (lrAvgAuPRC,regAvgAuPRC) = folds.map{case (train,test) => experiment(train,test)}.reduce((a1,a2) => (a1._1+a2._1,a1._2+a2._2))
+    val pTildes = Array(.001, .01, .05, .1, .2)
+    val lambdaUs = Array(/*.5, 1, 5, 10, 20, 50, 100, 1000, */10000, 50000, 100000, 500000, 1000000)
+
+    val lrAvgAuPRC = folds.map{case (train,test) => {
+      val regModel = new LogisticRegressionWithLBFGS().run(train)
+      val regPredsAndLabel = test.map { x => (regModel.predict(x.features),x.label) }
+      val regMetrics = new BinaryClassificationMetrics(regPredsAndLabel)
+      regMetrics.areaUnderPR()
+    }}.sum / folds.size.toDouble
     
-    val output = new ArrayBuffer[String]()
+    diagnostics("auPRC for Reg: " + lrAvgAuPRC / folds.size.toDouble)
     
-    output += "auPRC for LR: " + lrAvgAuPRC / folds.size.toDouble
-    output += "auPRC for Reg: " + regAvgAuPRC / folds.size.toDouble
-    
-    println(output.mkString("\n"))
+    for(pTilde <- pTildes) {
+      for(lambdaU <- lambdaUs) {
+        val lrAvgAuPRC = folds.map{case (train,test) => experiment(train,test, pTilde, lambdaU)}.sum / folds.size.toDouble
+        diagnostics("pTilde: " + pTilde + ", lambdaU: " + lambdaU + " auPRC for LR: " + lrAvgAuPRC)   
+      }
+    }
   }
   
-  def experiment(train: RDD[LabeledPoint], test: RDD[LabeledPoint]) : (Double,Double) = {
-    val LRmodel = new LRLogisticRegressionWithLBFGS().run(train)//LRLogisticRegressionWithSGD.train(sets(0), 150)
+  def experiment(train: RDD[LabeledPoint], test: RDD[LabeledPoint], pTilde: Double, lambdaU: Double) : (Double) = {
+    val LRmodel = new LRLogisticRegressionWithLBFGS(pTilde, lambdaU).run(train)
     val LRpredsAndLabel = test.map { x => (LRmodel.predict(x.features),x.label) }
-    val lrMetrics = new BinaryClassificationMetrics(LRpredsAndLabel)
-    
-    val regModel = new LogisticRegressionWithLBFGS().run(train)
-    val regPredsAndLabel = test.map { x => (regModel.predict(x.features),x.label) }
-    val regMetrics = new BinaryClassificationMetrics(regPredsAndLabel)
-    
+    val lrMetrics = new BinaryClassificationMetrics(LRpredsAndLabel)    
     //EnsembleUtils.printConfusionMatrix(List.fromArray(LRpredsAndLabel.collect()), 2)
-    //EnsembleUtils.printConfusionMatrix(List.fromArray(regPredsAndLabel.collect()), 2)  
     
-    (lrMetrics.areaUnderPR(), regMetrics.areaUnderPR())
+    (lrMetrics.areaUnderPR())
+  }
+  
+  def diagnostics(m: String, date:Boolean = true) : Unit = {
+    val pw = new PrintWriter(new FileOutputStream(f, true))
+    if(date)
+      pw.append(new SimpleDateFormat("MM/dd/yyyy HH:mm:ss").format(new Date()) + " " + m + "\n")
+    else
+      pw.append(m + "\n")
+    pw.close()
   }
 }
