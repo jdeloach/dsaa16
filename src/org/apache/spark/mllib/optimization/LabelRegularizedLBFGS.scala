@@ -217,7 +217,7 @@ object LRLBFGS extends Logging {
       val bcW = data.context.broadcast(w)
       val localGradient = gradient
 
-      val (gradientSum, lossSum) = data.treeAggregate((Vectors.zeros(n), 0.0))(
+      val (gradientSum, lossSum) = data.filter(_._1 == 1).treeAggregate((Vectors.zeros(n), 0.0))(
           seqOp = (c, v) => (c, v) match { case ((grad, loss), (label, features)) =>
             val l = localGradient.compute(
               features, label, bcW.value, grad)

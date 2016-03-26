@@ -41,6 +41,32 @@ object EnsembleUtils {
     (sc.parallelize(instances.value).sample(false, sample, 11L), sc.parallelize(features.value))
   }
   
+  def loadDenseArff(sc: SparkContext, fileName:String, sample: Double = 1.0) : (RDD[LabeledPoint], RDD[String]) = {
+    val textfile = sc.textFile(fileName, 10)
+   
+    val features = sc.accumulableCollection(ListBuffer[String]())
+    val instances = sc.accumulableCollection(ListBuffer[LabeledPoint]())
+    
+    textfile.foreach { x => {
+      if(x.startsWith("@attribute")) {
+        features += x.split(" ")(1) // title is second
+      }
+    }}
+    
+    textfile.foreach { x => {
+      if(!x.startsWith("@") && x.length() > 2) {
+        val splits = x.split(',')
+        val instanceClass = if (splits(0) == "high_mal"/* || splits(1) == "low_mal"*/) 1 else 0
+        val featureVector = Vectors.dense(splits.tail.map { x => x.toDouble }.toArray)
+        
+        if(splits(0) != "low_mal")
+          instances += new LabeledPoint(instanceClass, featureVector)
+      }
+    }}
+    
+    (sc.parallelize(instances.value).sample(false, sample, 11L), sc.parallelize(features.value))
+  }
+  
   def printConfusionMatrix(predAndLabel: List[(Double,Double)], classCount: Int) = {
     // labelAndPred
     println(" " + (0 until classCount).mkString(" ") + " <- predicted ")

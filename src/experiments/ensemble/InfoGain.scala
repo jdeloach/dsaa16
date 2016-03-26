@@ -25,7 +25,7 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.linalg.SparseVector
 
 object InfoGain {
-  val f = new File("ml_diagnostics.txt")
+  val f = new File("ml_diagnosticsBagDropping.txt")
   val nPartitions = 100
   val useSparse = false
   val sample = .1
@@ -34,12 +34,12 @@ object InfoGain {
   def main(args : Array[String]) {
     val conf = new SparkConf()
       .setAppName("Info Gain")
-      //.setMaster("local[10]")
+      .setMaster("local[10]")
       //.set("spark.executor.memory", "35g")
       .set("spark.driver.maxResultSize", "45g")
     val sc = new SparkContext(conf) 
       
-    val data = MLUtils.loadLibSVMFile(sc, "drebin_combined.libsvm")
+    val data = MLUtils.loadLibSVMFile(sc, "rq2_quarter.libsvm")
     val nToSelect = 150
     
     //val (data,features) = EnsembleUtils.loadArff(sc, "drebin_combined.arff", sample)
@@ -56,7 +56,8 @@ object InfoGain {
 
     val sets = generateSets(sc, data)
     
-    techniques.map { c => execute(sc, sets, data, c, nToSelect) }
+    techniques.map { c => executeBagDropping(sc, sets, data, new InfoThRanking("mim"), nToSelect) }
+    //techniques.map { c => execute(sc, sets, data, c, nToSelect) }
   }
   
   def execute(sc: SparkContext, baseSets: List[RDD[LabeledPoint]], baseData:RDD[LabeledPoint], technique: FeatureRankingTechnique, nToSelect: Int) : Unit = {
@@ -113,6 +114,57 @@ object InfoGain {
     val stringResults = crossValidatedResults.map{case (s,d) => s + ":" + d}.mkString("\n")
     diagnostics(stringResults)
     println(stringResults)
+  }
+  
+  def executeBagDropping(sc: SparkContext, baseSets: List[RDD[LabeledPoint]], baseData:RDD[LabeledPoint], technique: FeatureRankingTechnique, nToSelect: Int) : Unit = {
+    val listOfTopFeatures = baseSets.par.map { data => {
+      technique.train(data)
+      technique.weights
+    }}.toList
+    diagnostics("Finished using " + technique.techniqueName + " to rank features...", true)
+    val top100CommonFeats = listOfTopFeatures.flatten.groupBy{ x => x._1 }.map{case (idx,list) => (idx,list.map(x => Math.abs(x._2)).sum)}.toList.sortBy(f => f._2).reverse.take(nToSelect).map(_._1)
+    val random100Feats = Random.shuffle(listOfTopFeatures.map(list => list.map(_._1).toArray).flatten.distinct.toList).take(nToSelect)
+    technique.train(baseData);  val base100Feats = technique.weights.map(_._1)
+    val resultsDB = new ListBuffer[(Int,Map[String,Any])] // [FOLD,[Key,Value]] -> key includes {test,auROC,auPRC,etc.}
+    var fold = 1 // fold counter, not the number to use
+    diagnostics("Finished calculating various subsets of " + technique.techniqueName + " features.", true)
+    
+    List(1, .75, .5, .25, .05).foreach { x =>    
+      fold = 1
+      
+      MLUtils.kFold(baseData, nFolds, 7).foreach{ case (train,test) => {
+        val splits = Array(train,test)
+        val sets = Random.shuffle(generateSets(sc, train)).take((x * baseSets.size).toInt)
+  
+        diagnostics("Beginning experiments with a bag count of: " + (x * baseSets.size).toInt, true)
+        
+         // NaiveBayes
+        resultsDB += ((fold, testNNaiveBayes(subsetOfFeatures(sets, top100CommonFeats), subsetOfFeatures(splits(1), top100CommonFeats), "Ensemble " + nToSelect + " Top (" + technique.techniqueName + ")")));
+        resultsDB += ((fold, testNaiveBayes(subsetOfFeatures(splits(0), base100Feats), subsetOfFeatures(splits(1), base100Feats), "Single Classifier (" + nToSelect + ") features (" + technique.techniqueName + ")")))
+    //    val r3 = testNNaiveBayes(sets, splits(1), "Ensemble ALL Feats")
+        resultsDB += ((fold, testNNaiveBayes(subsetOfFeatures(sets, random100Feats), subsetOfFeatures(splits(1), random100Feats), "Ensemble Random " + nToSelect + " Feats (" + technique.techniqueName + ")")));
+        //resultsDB += ((fold, testFeatureSpecificNNaiveBayes(subsetOfFeaturesPerClassifier(sets, perClassifierTop100Features), splits(1), perClassifierTop100Features, "Per Classifier Best " + nToSelect + " Features (" + technique.techniqueName + ")")))
+        resultsDB += ((fold, testNNaiveBayes(subsetOfFeatures(sets, base100Feats), subsetOfFeatures(splits(1), base100Feats), "1-Classifier " + nToSelect + " Features used at the N-classifier Level (" + technique.techniqueName + ")")))
+        resultsDB += ((fold, testNaiveBayes(subsetOfFeatures(splits(0), top100CommonFeats), subsetOfFeatures(splits(1), top100CommonFeats), "Single Classifier (" + nToSelect + ") with ENSEMBLE-SELECTED features (" + technique.techniqueName + ")")))
+       
+        diagnostics("Fold " + fold + "/" + nFolds + "  of " + technique.techniqueName + " for Bag Count: " + baseSets.size + " completed.", true)
+        
+        fold += 1
+        
+        resultsDB
+      }}
+      
+      val crossValidatedResults = resultsDB.groupBy{case (fold,map) => { map("test") }}.map { case (name:String,results) => {
+        val metrics = results.map(_._2.keySet.filter { _ != "test" }).flatten.distinct
+        (name,metrics.map( metric => (metric,results.map(_._2(metric).asInstanceOf[Double]).sum/fold)))
+      }}
+      
+      val stringResults = crossValidatedResults.map{case (s,d) => s + ":" + d}.mkString("\n")
+      diagnostics(stringResults)
+      println(stringResults)
+      
+      resultsDB.clear()
+    }
   }
   
   /**
@@ -195,6 +247,7 @@ object InfoGain {
     val ensemble = new NaiveBayesBinaryVoting(classifiers)
     val predictionAndLabel = test.map(p => (ensemble.predict(p.features), p.label))
     val metrics = new BinaryClassificationMetrics(predictionAndLabel)
+    
     HashMap("test" -> ("NB " + testName), "auROC" -> metrics.areaUnderROC(), "auPRC" -> metrics.areaUnderPR(), "expertAuPRC" -> ensemble.expertAuPRC(test)/*, "averageVotedAuPRC" -> ensemble.averageVotedAuPRC(test), "averageAuPRC" -> ensemble.averageAuPRC(test)*/)
   }
   

@@ -42,6 +42,13 @@ class NaiveBayesBinaryVoting(models: List[NaiveBayesModel]) extends ClassifierEn
     }}
     
     val metrics = new BinaryClassificationMetrics(predictionAndLabel)
+    
+    if(models.size == 1) {
+      predictionAndLabel.map(x => x._1 + "," + x._2).saveAsTextFile("expertPredsAndLabel.csv")
+      test.map { x => (models(0).predict(x.features),x.label) }.map(x => x._1 + "," + x._2).saveAsTextFile("modelPredsAndLabel.csv")
+      val debug2 = ""
+    }
+    
     metrics.areaUnderPR()
   }
   
