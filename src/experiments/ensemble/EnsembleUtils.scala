@@ -6,8 +6,12 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext
 import org.apache.spark.mllib.regression.LabeledPoint
 import scala.collection.mutable.ListBuffer
+import org.apache.spark.sql.Row
+import org.apache.spark.mllib.regression.MislabeledLabeledPoint
 
 object EnsembleUtils {
+  val mysqlURL = scala.io.Source.fromInputStream(getClass.getResourceAsStream("/resources/mysql.txt")).bufferedReader().lines().findFirst().get
+
   /** Returns the subset of features necessary for the provided model feature specification */
   def modelSpecificFeatureVector(modelFeatures: Array[Int], baseFeatureVector: Vector, useSparse:Boolean = false) : Vector = {
     if(useSparse)
@@ -41,6 +45,109 @@ object EnsembleUtils {
     (sc.parallelize(instances.value).sample(false, sample, 11L), sc.parallelize(features.value))
   }
   
+  /**
+   * Returns the base/general dataset, containing positive and negative points.
+   * Also contains a special forward-temporal dataset.
+   */
+  def loadFromDB(sc: SparkContext) : (RDD[LabeledPoint],RDD[LabeledPoint]) = {
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    import sqlContext.implicits._
+
+    val jdbcDF = sqlContext.read.format("jdbc").options(
+      Map("url" -> mysqlURL,
+      "dbtable" -> "appSec")).load()
+      
+    val testSet = jdbcDF.filter("class = 'playdrone_benign' and scannersCount > 9")
+                  .map { x => { val point = rowToLabeledPoint(x); new LabeledPoint(1d, point.features) }}    
+    val baseSet = jdbcDF.filter("class = 'playdrone_benign' or class = 'high_mal'").map { rowToLabeledPoint(_) }.filter { _.label != -1 }
+    println(s"Test Dataset Size: ${testSet.count}")
+    (baseSet,testSet)
+  }
+  
+  /**
+   * Returns MislabeledPoints 
+   */
+  def loadBothLabelsDB(sc: SparkContext) : (RDD[LabeledPoint]) = {
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    import sqlContext.implicits._
+
+    val jdbcDF = sqlContext.read.format("jdbc").options(
+      Map("url" -> mysqlURL,
+      "dbtable" -> "appSec")).load()
+      
+    jdbcDF.filter("class = 'playdrone_benign' or class = 'high_mal'").map { rowToMislabeledPoint(_) }.filter { x => x.label != -1 && x.asInstanceOf[MislabeledLabeledPoint].realLabel != -1  }   
+  }
+  
+  /**
+   * Loads High Confidence (>=10) as Positive, and REST as Negative/Unlabeled. E.g. Count=5 would be unlabeled/negative
+   */
+  def loadHighConfAndRest(sc: SparkContext) : RDD[LabeledPoint] = {
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    import sqlContext.implicits._
+
+    val jdbcDF = sqlContext.read.format("jdbc").options(
+      Map("url" -> mysqlURL,
+      "dbtable" -> "appSec")).load()    
+    
+    jdbcDF.filter("scannersCount != -1").map { row => {
+      val trainLabel = row.getInt(row.fieldIndex("scannersCount")) match {
+        case x if x >= 10 => 1d
+        case x if x < 10 && x >= 0 => 0d
+        case _ => -1d
+      }
+      val testLabel = row.getInt(row.fieldIndex("scannersCount")) match {
+        case x if x >= 10 => 1d
+        case 0 => 0d
+        case _ => -1d
+      }
+      
+      val features = Vectors.dense(row.toSeq.drop(4).map { _.asInstanceOf[Integer].toDouble }.toArray)
+      new MislabeledLabeledPoint(testLabel, trainLabel,features).asInstanceOf[LabeledPoint]
+    }}.filter { x => x.label != -1 }       
+  }
+  
+  def rowToMislabeledPoint(row: Row) : LabeledPoint = {    
+    new MislabeledLabeledPoint(rowToLabeledPoint(row), row.getInt(row.fieldIndex("scannersCount")) match {
+      case x if x > 9 => 1d
+      case x if x == 0 => 0d
+      case _ => -1d
+    })
+  }
+  
+  def rowToLabeledPoint(row: Row) : LabeledPoint = {
+    val label = row.getString(row.fieldIndex("class")) match {
+      case "playdrone_benign" => 0d
+      case "high_mal" => 1d
+      case _ => -1d
+    }
+    val features = Vectors.dense(row.toSeq.drop(4).map { _.asInstanceOf[Integer].toDouble }.toArray)
+    
+    new LabeledPoint(label,features)    
+  }
+  
+  /**
+   * @param maxBenign is the maximum the app can have to be benign, e.g. 0 for 0 scanners max can consider it benign. 1 for 0 or 1
+   * @param minMalware the minimum scanners to consider it malware. E.g. 10 if you want >=10
+   */
+  def loadScannerCounts(sc:SparkContext, maxBenign:Int, minMalware:Int) : RDD[LabeledPoint] = {
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    import sqlContext.implicits._
+
+    val jdbcDF = sqlContext.read.format("jdbc").options(
+      Map("url" -> mysqlURL,
+      "dbtable" -> "appSec")).load()    
+    
+    jdbcDF.filter("scannersCount != -1").map { row => {
+      val label = row.getInt(row.fieldIndex("scannersCount")) match {
+        case x if x >= minMalware => 1d
+        case x if x <= maxBenign => 0d
+        case _ => -1d
+      }
+      val features = Vectors.dense(row.toSeq.drop(4).map { _.asInstanceOf[Integer].toDouble }.toArray)
+      new LabeledPoint(label,features)
+    }}.filter { x => x.label != -1 }      
+  }
+  
   def loadDenseArff(sc: SparkContext, fileName:String, sample: Double = 1.0) : (RDD[LabeledPoint], RDD[String]) = {
     val textfile = sc.textFile(fileName, 10)
    
@@ -65,6 +172,12 @@ object EnsembleUtils {
     }}
     
     (sc.parallelize(instances.value).sample(false, sample, 11L), sc.parallelize(features.value))
+  }
+  
+  def precision(predsAndLabel: RDD[(Double,Double)]) : Double = {
+    val tp = predsAndLabel.filter(x => x._1 == x._2 && x._2 == 1).count; 
+    val fp = predsAndLabel.filter(x => x._1 == 1 && x._2 == 0).count; 
+    tp / (tp + fp).toDouble
   }
   
   def printConfusionMatrix(predAndLabel: List[(Double,Double)], classCount: Int) = {
