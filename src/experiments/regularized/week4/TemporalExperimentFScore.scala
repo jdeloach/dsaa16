@@ -1,4 +1,4 @@
-package experiments.regularized
+package experiments.regularized.week4
 
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
@@ -18,7 +18,7 @@ import org.apache.spark.mllib.classification.SVMWithSGD
 import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
 import org.apache.spark.mllib.classification.NaiveBayes
 
-object TemporalTest {
+object TemporalExperimentFScore {
   val f = new File("temporalLRLR_diagnostics.txt")
 
   def main(args: Array[String]) : Unit = {

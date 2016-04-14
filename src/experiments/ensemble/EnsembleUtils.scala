@@ -91,8 +91,8 @@ object EnsembleUtils {
     
     jdbcDF.filter("scannersCount != -1").map { row => {
       val trainLabel = row.getInt(row.fieldIndex("scannersCount")) match {
-        case x if x >= 10 => 1d
-        case x if x < 10 && x >= 0 => 0d
+        case x if x >= 20 => 1d
+        case x if x < 20 && x >= 0 => 0d
         case _ => -1d
       }
       val testLabel = row.getInt(row.fieldIndex("scannersCount")) match {
@@ -174,12 +174,24 @@ object EnsembleUtils {
     (sc.parallelize(instances.value).sample(false, sample, 11L), sc.parallelize(features.value))
   }
   
+  def tpr(predsAndLabel: RDD[(Double,Double)]) : Double = {
+    val tp = predsAndLabel.filter(x => x._1 == x._2 && x._2 == 1).count; 
+    val p = predsAndLabel.count; 
+    tp / p.toDouble
+  }
+  
   def precision(predsAndLabel: RDD[(Double,Double)]) : Double = {
     val tp = predsAndLabel.filter(x => x._1 == x._2 && x._2 == 1).count; 
     val fp = predsAndLabel.filter(x => x._1 == 1 && x._2 == 0).count; 
     tp / (tp + fp).toDouble
   }
   
+  def f1score(predsAndLabel: RDD[(Double,Double)]) : Double = {
+    val precision = EnsembleUtils.precision(predsAndLabel)
+    val recall = EnsembleUtils.tpr(predsAndLabel)
+    2 * (precision * recall) / (precision + recall)
+  }
+    
   def printConfusionMatrix(predAndLabel: List[(Double,Double)], classCount: Int) = {
     // labelAndPred
     println(" " + (0 until classCount).mkString(" ") + " <- predicted ")

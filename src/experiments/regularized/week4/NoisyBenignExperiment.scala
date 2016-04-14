@@ -19,11 +19,15 @@ import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
 import org.apache.spark.mllib.classification.NaiveBayes
 
 object NoisyBenignExperiment {
-  val experiment = "4.3" //"4.1"
-  val experimentName = experiment match { case "4.1" => "maxScannersForBenign"; case "4.3" => "minScannersForMalware" }
-  val f = new File(s"noisyBenign${experiment}_diagnostics.txt")
+  var experiment:String = _
+  var experimentName:String = _
+  var f:File = _
 
   def main(args: Array[String]) : Unit = {    
+    experiment = args(0) // 4.1 or 4.3
+    experimentName = experiment match { case "4.1" => "maxScannersForBenign"; case "4.3" => "minScannersForMalware" }
+    f = new File(s"noisyBenign${experiment}_diagnostics.txt")
+    
     val conf = new SparkConf()
       .setAppName(s"NoisyBenign $experiment LR LR")
       .set("spark.driver.maxResultSize", "45g")

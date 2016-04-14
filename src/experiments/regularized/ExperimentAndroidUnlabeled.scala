@@ -33,9 +33,14 @@ object ExperimentAndroidUnlabeled {
       //.set("spark.executor.memory", "35g")
       .set("spark.driver.maxResultSize", "45g")
     val sc = new SparkContext(conf) 
-    val (base,temporalTest) = EnsembleUtils.loadFromDB(sc)
-    //val baseData = EnsembleUtils.loadDenseArff(sc, "rq4_base_highquality_clean.arff", 1)._1.repartition(100).cache
-    val baseData = base.repartition(100).cache
+    //val (base,temporalTest) = EnsembleUtils.loadFromDB(sc)
+    val baseData = EnsembleUtils.loadDenseArff(sc, "rq4_base_highquality_clean.arff", .05)._1.repartition(100).cache
+    val (train,test) = baseData.randomSplit(Array(.67, .33), 11L) match { case Array(f1,f2) => (f1,f2) }
+    val LRmodel = new LRLogisticRegressionWithLBFGS(.05, 1).run(train)
+    val metrics = new BinaryClassificationMetrics(test.map { x => (LRmodel.predict(x.features),x.label) })
+    println(s"auPRC: ${metrics.areaUnderPR}")
+    
+    /*val baseData = base.repartition(100).cache
     temporalTest.cache
     
     // .001 to .032 are the range we can do
@@ -48,7 +53,7 @@ object ExperimentAndroidUnlabeled {
       lrLr(folds, temporalTest, noiseLevel)
       
       folds.foreach { case (a,b) => a.unpersist(false); b.unpersist(false) } // force spark to drop from memory ... just for safety
-    }}
+    }}*/
   }
   
   /**

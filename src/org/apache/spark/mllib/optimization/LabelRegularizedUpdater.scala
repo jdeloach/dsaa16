@@ -57,4 +57,21 @@ class LabelRegularizedUpdater(pTilde:Double, lambdaU:Double) extends Updater {
     
     (lambdaU * lrGradient, lambdaU * klDivergence)
   }
+  
+  def bhLrGradient(weightsOld: Vector, data: RDD[(Double,Vector)]) : (BV[Double],Double) = {
+    // TODO: implement minibatch fraction 1.0
+    
+    val currModel = new LogisticRegressionModel(weightsOld, 0, data.first()._2.size, 2)
+    currModel.clearThreshold() // output probs
+    val unlabeledClass = 0
+    val unlabeled = data.sample(false, 1.0, 42).filter(_._1 == unlabeledClass)
+    val unlabledCount = unlabeled.count
+    val pThetaHat = 1/(unlabeled.count.toDouble) * unlabeled.map(data => currModel.predict(data._2)).sum
+    
+    val bdDivergence = -1 * math.log(math.sqrt(pTilde*pThetaHat) + math.sqrt((1-pTilde)*(1-pThetaHat)))
+    val summation = unlabeled.map(data => data._2.toBreeze * (currModel.predict(data._2) * (1 - currModel.predict(data._2)))).reduce((v1,v2) => v1 + v2) // xi * p(y=1)(1-p(y=1)) for all unlabeled
+    val lrGradient =  -1/2.0 * (math.pow((pTilde-pThetaHat), -1/2.0)+math.pow((1-pTilde)*(1-pThetaHat), -1/2.0)) * summation / (math.sqrt(pTilde - pThetaHat) + math.sqrt((1-pTilde)*(1-pThetaHat)))
+    
+    (lambdaU * lrGradient, lambdaU * bdDivergence)
+  }
 }
