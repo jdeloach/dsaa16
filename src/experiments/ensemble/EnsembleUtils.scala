@@ -64,6 +64,26 @@ object EnsembleUtils {
     (baseSet,testSet)
   }
   
+  def load2016LabelsSimple(sc: SparkContext) : RDD[LabeledPoint] = {
+    val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+    import sqlContext.implicits._
+
+    val jdbcDF = sqlContext.read.format("jdbc").options(
+      Map("url" -> mysqlURL,
+      "dbtable" -> "appSec")).load()    
+    
+    jdbcDF.filter("scannersCount != -1").map { row => {
+      val label = row.getInt(row.fieldIndex("scannersCount")) match {
+        case x if x >= 10 => 1d
+        case x if x == 0 => 0d
+        case _ => -1d
+      }
+      
+      val features = Vectors.dense(row.toSeq.drop(4).map { _.asInstanceOf[Integer].toDouble }.toArray)
+      new LabeledPoint(label,features)
+    }}.filter { x => x.label != -1 }          
+  }
+  
   /**
    * Returns MislabeledPoints 
    */
@@ -79,6 +99,33 @@ object EnsembleUtils {
   }
   
   /**
+   * Provides a tuple of (training,test). Training contains 49 families represented by 1 malware each labeled as malware, 
+   * also it contains about 10,000 benign. Test is all Genome malware.
+   */
+  def load2012GenomeData(sc: SparkContext) = {
+    // 1 from each family is labeled, rest is unlabeled,
+    
+    val textfile = sc.textFile("genome.arff", 10)   
+    val mSpl = textfile.filter{ x => (!x.startsWith("@") && x.length() > 2) }.map { x => {
+      val splits = x.split(',')
+      (splits(0).split('-')(0),new LabeledPoint(1,Vectors.dense(splits.tail.map { x => x.toDouble }.toArray)))
+    }}.randomSplit(Array(0.5,.5), 7L)
+    
+    val malwareTrUn = mSpl(0).groupBy(_._1)
+    val malwareTest = mSpl(1).map(_._2).repartition(100)
+    
+    val malSplit = malwareTrUn.map(x => (x._2.head,x._2.tail))
+    val (mTrain,mUnlabeled) = (malSplit.map(x => x._1._2).repartition(100), malSplit.flatMap(x => x._2).map(x => new MislabeledLabeledPoint(1,0,x._2.features).asInstanceOf[LabeledPoint]).repartition(100))
+    val benign = load2016LabelsSimple(sc).filter { x => x.label == 0 }.sample(false, .01, 11L).repartition(100)
+    
+    // mTest = 50% of Genome
+    // mTrain = 1 Family from the OTHER 50% of Genome
+    // munlabeled = Genome - mTest - mTrain (e.g. other families from OTHER 50% of Genome, besides 1)
+    Array((mTrain ++ mUnlabeled ++ benign,malwareTest),
+    (mTrain ++ benign,malwareTest))
+  }
+  
+  /**
    * Loads High Confidence (>=10) as Positive, and REST as Negative/Unlabeled. E.g. Count=5 would be unlabeled/negative
    */
   def loadHighConfAndRest(sc: SparkContext) : RDD[LabeledPoint] = {
@@ -91,8 +138,8 @@ object EnsembleUtils {
     
     jdbcDF.filter("scannersCount != -1").map { row => {
       val trainLabel = row.getInt(row.fieldIndex("scannersCount")) match {
-        case x if x >= 20 => 1d
-        case x if x < 20 && x >= 0 => 0d
+        case x if x >= 10 => 1d
+        case x if x < 10 && x >= 0 => 0d
         case _ => -1d
       }
       val testLabel = row.getInt(row.fieldIndex("scannersCount")) match {

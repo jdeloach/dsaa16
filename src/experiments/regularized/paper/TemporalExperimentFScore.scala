@@ -1,4 +1,4 @@
-package experiments.regularized.week4
+package experiments.regularized.paper
 
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
@@ -19,51 +19,29 @@ import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
 import org.apache.spark.mllib.classification.NaiveBayes
 
 object TemporalExperimentFScore {
-  val f = new File("4.4_diagnostics.txt")
+  val f = new File("paper/6.4_diagnostics.txt")
 
   def main(args: Array[String]) : Unit = {
     val conf = new SparkConf()
-      .setAppName("Temporal LR LR")
-      //.setMaster("local[10]")
+      .setAppName("LR-LR Temporal Future")
       .set("spark.driver.maxResultSize", "45g")
     val sc = new SparkContext(conf) 
     val base = EnsembleUtils.loadBothLabelsDB(sc)
     val baseData = base.repartition(100).cache
+      
+    diagnostics(s"Starting LabelReg Class 0 Count: ${baseData.filter{_.label == 0}.count} Class 1 Count: ${baseData.filter{_.label == 1}.count}")
+    diagnostics(s"2015 to 2016 Changes: ${baseData.filter { x => val y = x.asInstanceOf[MislabeledLabeledPoint]; y.realLabel != y.label }.count()}") 
+
+    diagnostics(s"Including CHANGED from TRAINING")
+    var folds = MLUtils.kFold(baseData, 5, 11).map{case (a,b) => (a.repartition(100).cache,b.repartition(100).cache)  }
+
+    supervisedTests(folds)
+    lrLr(folds)
     
-    // .001 to .032 are the range we can do
-    val noiseLevel = 0 // NOT DOING IT
-    
-    List(2015/*,2016*/).foreach { year => {  
-      val data = year match {
-        case 2015 => baseData // keep 2015 labels with mislabeled for when we test 2016
-        case 2016 => baseData.map { x => new LabeledPoint(x.asInstanceOf[MislabeledLabeledPoint].realLabel, x.features) } // 2016 label for train and test
-      }
-      
-      diagnostics(s"Starting LabelReg with BASE YEAR: $year. Noise Level: $noiseLevel Class 0 Count: ${data.filter{_.label == 0}.count} Class 1 Count: ${data.filter{_.label == 1}.count}")
-      diagnostics(s"2015 to 2016 Changes: ${data.filter { x => val y = x.asInstanceOf[MislabeledLabeledPoint]; y.realLabel != y.label }.count()}") 
-      
-      diagnostics(s"Excluding CHANGED from TRAINING")
-      var folds = MLUtils.kFold(data, 3, 11).map{case (a,b) => (a.filter{ x => x.asInstanceOf[MislabeledLabeledPoint].realLabel == x.label }.repartition(100).cache,b.repartition(100).cache)  }
-  
-      supervisedTests(folds)
-      lrLr(folds)
-      
-      folds.foreach { case (a,b) => a.unpersist(false); b.unpersist(false) } // force spark to drop from memory ... just for safety
-      
-      diagnostics(s"Including CHANGED from TRAINING")
-      folds = MLUtils.kFold(data, 3, 11).map{case (a,b) => (a.repartition(100).cache,b.repartition(100).cache)  }
-  
-      supervisedTests(folds)
-      lrLr(folds)
-      
-      folds.foreach { case (a,b) => a.unpersist(false); b.unpersist(false) } // force spark to drop from memory ... just for safety
-  
-    } }
+    folds.foreach { case (a,b) => a.unpersist(false); b.unpersist(false) } // force spark to drop from memory ... just for safety
   }
   
-  def supervisedTests(folds: Array[(RDD[LabeledPoint],RDD[LabeledPoint])]) {
-    // NB, LR, SVM
-    
+  def supervisedTests(folds: Array[(RDD[LabeledPoint],RDD[LabeledPoint])]) {    
     val naiveBayesPRC = folds.map{ case (train,test) => {
       diagnostics(s"Number of Training Pos: ${train.filter { x => x.label == 1 }.count }, Neg: ${train.filter { x => x.label == 0 }.count}, Test Pos: ${test.filter { x => x.label == 1 }.count }, Neg: ${test.filter { x => x.label == 0 }.count}")
       
@@ -104,9 +82,8 @@ object TemporalExperimentFScore {
   }
   
   def lrLr(folds: Array[(RDD[LabeledPoint],RDD[LabeledPoint])]) {
-    //val pTildes = Array(noiseLevel) // 25/775 50/800
-    val pTildes = Array(.001, .01, .0322, .05/*, .0625, .1 , .2*/)
-    val lambdaUs = Array(/*.5,*/ 1, 5, 10/*, 20, 50, 100, 1000, 10000, 50000, 100000, 500000, 1000000*/)
+    val pTildes = Array(.001, .01, .0322, .05)
+    val lambdaUs = Array(1)
     
     pTildes.foreach{ pTilde =>
       lambdaUs.foreach { lambdaU =>

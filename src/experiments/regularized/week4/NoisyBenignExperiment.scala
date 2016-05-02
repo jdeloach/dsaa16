@@ -84,8 +84,8 @@ object NoisyBenignExperiment {
   
   def lrLr(folds: Array[(RDD[LabeledPoint],RDD[LabeledPoint])], maxScannersForBenign: Int) {
     //val pTildes = Array(noiseLevel) // 25/775 50/800
-    val pTildes = Array(.001, .01, .0322, .05, .0625, .1 , .2)
-    val lambdaUs = Array(/*.5,*/ 1, 5, /*10,*/ 20, 50/*, 100, 1000, 10000, 50000, 100000, 500000, 1000000*/)
+    val pTildes = Array(/*.001,*/ .01, /*.0322,*/ .05/*, .0625, .1 , .2*/)
+    val lambdaUs = Array(/*.5,*/ 1, 5/*, 10, 20, 50, 100, 1000, 10000, 50000, 100000, 500000, 1000000*/)
     
     pTildes.foreach{ pTilde =>
       lambdaUs.foreach { lambdaU =>

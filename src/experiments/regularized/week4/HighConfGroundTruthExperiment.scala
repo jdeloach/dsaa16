@@ -29,10 +29,10 @@ object HighConfGroundTruthExperiment {
     
     val data = EnsembleUtils.loadHighConfAndRest(sc).repartition(100).cache
     diagnostics(s"Starting LabelReg Class 0 Count: ${data.filter{_.label == 0}.count} Class 1 Count: ${data.filter{_.label == 1}.count}")
-    diagnostics(s"Noise (where 0<scannersCount<10): ${data.filter { x => val y = x.asInstanceOf[MislabeledLabeledPoint]; y.realLabel != y.label }.count()}") 
+    diagnostics(s"Noise (where 0<scannersCount<10): ${data.filter { x => val y = x.asInstanceOf[MislabeledLabeledPoint]; y.realLabel != y.label }.count()}")
     val folds = MLUtils.kFold(data, 3, 11).map{case (a,b) => (a.repartition(100).cache,b.filter { x => x.asInstanceOf[MislabeledLabeledPoint].realLabel != -1 }.repartition(100).cache)  }
     
-    supervisedTests(folds)
+    //supervisedTests(folds)
     lrLr(folds)
     
     folds.foreach { case (a,b) => a.unpersist(false); b.unpersist(false) } // force spark to drop from memory ... just for safety
@@ -72,8 +72,8 @@ object HighConfGroundTruthExperiment {
   
   def lrLr(folds: Array[(RDD[LabeledPoint],RDD[LabeledPoint])]) {
     //val pTildes = Array(noiseLevel) // 25/775 50/800
-    val pTildes = Array(.001, .01, .0322, .05, .0625, .1 , .2)
-    val lambdaUs = Array(/*.5,*/ 1, 5,10/*, 20, 50, 100, 1000, 10000, 50000, 100000, 500000, 1000000*/)
+    val pTildes = Array(/*.001, .01,*/ .0322/*, .05, .0625, .1 , .2*/)
+    val lambdaUs = Array(/*.5,*/ 1, 5,10, 10*(folds(0)._1.filter { x => x.label == 1 }.count())/*, 20, 50, 100, 1000, 10000, 50000, 100000, 500000, 1000000*/)
     
     pTildes.foreach{ pTilde =>
       lambdaUs.foreach { lambdaU =>
