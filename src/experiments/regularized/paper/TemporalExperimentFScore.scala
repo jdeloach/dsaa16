@@ -82,7 +82,7 @@ object TemporalExperimentFScore {
   }
   
   def lrLr(folds: Array[(RDD[LabeledPoint],RDD[LabeledPoint])]) {
-    val pTildes = Array(.001, .01, .0322, .05)
+    val pTildes = Array(0, .001, .01, .0322, .05)
     val lambdaUs = Array(1)
     
     pTildes.foreach{ pTilde =>
